@@ -16,7 +16,6 @@ import com.datastax.driver.core.querybuilder.Select;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +37,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   private final Map<String, TableMetadata.Table> tableMetadataCache;
   private final Map<String, RecordToBoundStatementConverter> deleteStatementCache;
   private final Map<String, RecordToBoundStatementConverter> insertStatementCache;
+  private final String ttlParamName = "ttl";
 
   ScyllaDbSessionImpl(ScyllaDbSinkConnectorConfig config, Cluster cluster, Session session) {
     this.cluster = cluster;
@@ -154,8 +154,16 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
       return (topicConfigs.getTtl() == null) ? session.prepare(statement) :
               session.prepare(statement.using(QueryBuilder.ttl(topicConfigs.getTtl())));
     } else {
-      return (config.ttl == null) ? session.prepare(statement) :
-              session.prepare(statement.using(QueryBuilder.ttl(config.ttl)));
+      if (config.ttl == null) {
+        if (config.ttlDateField == null) {
+          return session.prepare(statement);
+        } else {
+          return session.prepare(statement.using(QueryBuilder.ttl(QueryBuilder.bindMarker(
+              ttlParamName))));
+        }
+      } else {
+        return session.prepare(statement.using(QueryBuilder.ttl(config.ttl)));
+      }
     }
   }
 

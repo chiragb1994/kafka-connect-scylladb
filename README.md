@@ -25,7 +25,7 @@ The ScyllaDB Sink Connector accepts two data formats from kafka. They are:
 
 **Note:** In case of JSON without schema, the table should already be present in the keyspace.
 
-This connector uses the topic name to determine the name of the table to write to. You can change this dynamically by using a
+You can set the table name using ``scylladb.table`` configuration. By default, this connector uses the topic name to determine the name of the table to write to. You can also change this dynamically by using a
 transform like [Regex Router](<https://kafka.apache.org/documentation/#connect_transforms>) to change the topic name.
 
 To run this connector you can you a dockerised ScyllaDB instance. Follow this [link](https://hub.docker.com/r/scylladb/scylla/) for use.
@@ -47,6 +47,8 @@ Time To Live (TTL) Support
 This connector provides support for TTL by which data can be automatically expired after a specific period.
 ``TTL`` value is the time to live value for the data. After that particular amount of time, data will be automatically deleted. For example, if the TTL value is set to 100 seconds then data would be automatically deleted after 100 seconds.
 To use this feature you have to set ``scylladb.ttl`` config with time(in seconds) for which you want to retain the data. If you don't specify this property then the record will be inserted with default TTL value null, meaning that written data will not expire.
+
+To set TTL based on a field in data, set ``scylladb.ttl_date_field`` and ``scylladb.ttl_date_offset_seconds``. 
 
 --------------------------------
 Offset tracking Support in Kafka

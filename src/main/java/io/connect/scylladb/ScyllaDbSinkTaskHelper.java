@@ -2,6 +2,7 @@ package io.connect.scylladb;
 
 import com.datastax.driver.core.BoundStatement;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Strings;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.common.TopicPartition;
@@ -49,7 +50,12 @@ public class ScyllaDbSinkTaskHelper {
   }
 
   public BoundStatement getBoundStatementForRecord(SinkRecord record) {
-    final String tableName = record.topic().replaceAll("\\.", "_").replaceAll("-", "_");
+    final String tableName;
+    if (Strings.isNullOrEmpty(scyllaDbSinkConnectorConfig.tableName)) {
+      tableName = record.topic().replaceAll("\\.", "_").replaceAll("-", "_");
+    } else {
+      tableName = scyllaDbSinkConnectorConfig.tableName;
+    }
     BoundStatement boundStatement = null;
     TopicConfigs topicConfigs = null;
     if (scyllaDbSinkConnectorConfig.topicWiseConfigs.containsKey(tableName)) {
@@ -65,7 +71,7 @@ public class ScyllaDbSinkTaskHelper {
       if (deletionEnabled) {
         if (this.session.tableExists(tableName)) {
           final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
-          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, null, ScyllaDbConstants.DELETE_OPERATION);
+          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, null, ScyllaDbConstants.DELETE_OPERATION, this.scyllaDbSinkConnectorConfig.ttlDateField, this.scyllaDbSinkConnectorConfig.ttlDateOffsetSeconds);
           Preconditions.checkState(
                   state.parameters > 0,
                   "key must contain the columns in the primary key."
@@ -84,7 +90,7 @@ public class ScyllaDbSinkTaskHelper {
     } else {
       this.session.createOrAlterTable(tableName, record, topicConfigs);
       final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName, topicConfigs);
-      final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
+      final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION, this.scyllaDbSinkConnectorConfig.ttlDateField, this.scyllaDbSinkConnectorConfig.ttlDateOffsetSeconds);
       boundStatement = state.statement;
     }
 

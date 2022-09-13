@@ -47,6 +47,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final String keyspace;
   public final boolean keyspaceCreateEnabled;
   public final int keyspaceReplicationFactor;
+  public final String tableName;
   public final boolean offsetEnabledInScyllaDB;
   public final boolean tableManageEnabled;
   public final TableOptions.CompressionOptions tableCompressionAlgorithm;
@@ -59,6 +60,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final String loadBalancingLocalDc;
   public final Map<String, TopicConfigs> topicWiseConfigs;
   public final Integer ttl;
+  public final String ttlDateField;
+  public final Integer ttlDateOffsetSeconds;
   public final BehaviorOnError behaviourOnError;
   public final List<String> cipherSuites;
   public final File certFilePath;
@@ -95,7 +98,10 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.deletesEnabled = getBoolean(DELETES_ENABLE_CONFIG);
 
     this.keyspace = getString(KEYSPACE_CONFIG);
+    this.tableName = getString(TABLENAME_CONFIG);
     this.ttl = getInt(TTL_CONFIG);
+    this.ttlDateField = getString(TTL_DATE_FIELD_CONFIG);
+    this.ttlDateOffsetSeconds = getInt(TTL_DATE_OFFSET_SECONDS_CONFIG);
 
     final String trustStorePath = this.getString(SSL_TRUSTSTORE_PATH_CONFIG);
     this.trustStorePath = Strings.isNullOrEmpty(trustStorePath) ? null : new File(trustStorePath);
@@ -230,6 +236,9 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   private static final String COMPRESSION_DOC = "Compression algorithm to use when connecting to ScyllaDB. "
           + "Valid Values are NONE, SNAPPY, LZ4.";
 
+  public static final String TABLENAME_CONFIG = "scylladb.table";
+  private static final String TABLENAME_DOC = "The table to write to. ";
+
   public static final String TABLE_MANAGE_ENABLED_CONFIG = "scylladb.table.manage.enabled";
   private static final String SCHEMA_MANAGE_CREATE_DOC = "Flag to determine if the connector should manage the table.";
 
@@ -280,6 +289,20 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "After this interval elapses, Scylladb will remove these records. "
           + "If this configuration is not provided, the Sink Connector will perform "
           + "insert operations in ScyllaDB  without TTL setting.";
+
+  public static final String TTL_DATE_FIELD_CONFIG = "scylladb.ttl_date_field";
+  public static final String TTL_DATE_FIELD_DEFAULT = null;
+  private static final String TTL_DATE_FIELD_DOC = "The field to pick the date for TTL for the data in ScyllaDB. "
+      + "After this interval elapses, Scylladb will remove these records. "
+      + "If this configuration is not provided, the Sink Connector will perform "
+      + "insert operations in ScyllaDB  without TTL setting.";
+
+  public static final String TTL_DATE_OFFSET_SECONDS_CONFIG = "scylladb.ttl_date_offset_seconds";
+  public static final Integer TTL_DATE_OFFSET_SECONDS_DEFAULT = 0;
+  private static final String TTL_DATE_OFFSET_SECONDS_DOC = "The offset seconds to add to date from scylladb.ttl_date_field for TTL. "
+      + "After this interval elapses, Scylladb will remove these records. "
+      + "If this configuration is not provided, the Sink Connector will perform "
+      + "insert operations in ScyllaDB  without TTL setting.";
 
   private static final String LOAD_BALANCING_LOCAL_DC_CONFIG = "scylladb.loadbalancing.localdc";
   private static final String LOAD_BALANCING_LOCAL_DC_DEFAULT = "";
@@ -551,13 +574,22 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     Collections.singletonList(KEYSPACE_CREATE_ENABLED_CONFIG),
                     new VisibleIfEqual(KEYSPACE_CREATE_ENABLED_CONFIG, true))
             .define(
+                    TABLENAME_CONFIG,
+                    ConfigDef.Type.STRING,
+                    ConfigDef.Importance.HIGH,
+                    TABLENAME_DOC,
+                    TABLE_GROUP,
+                    0,
+                    ConfigDef.Width.SHORT,
+                    "ScyllaDB Table")
+            .define(
                     TABLE_MANAGE_ENABLED_CONFIG,
                     ConfigDef.Type.BOOLEAN,
                     true,
                     ConfigDef.Importance.HIGH,
                     SCHEMA_MANAGE_CREATE_DOC,
                     TABLE_GROUP,
-                    0,
+                    1,
                     ConfigDef.Width.SHORT,
                     "Manage Table Schema(s)?")
             .define(
@@ -568,7 +600,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Importance.MEDIUM,
                     TABLE_CREATE_COMPRESSION_ALGORITHM_DOC,
                     TABLE_GROUP,
-                    1,
+                    2,
                     ConfigDef.Width.SHORT,
                     "Table Compression",
                     Collections.singletonList(TABLE_MANAGE_ENABLED_CONFIG),
@@ -580,7 +612,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Importance.LOW,
                     OFFSET_STORAGE_TABLE_DOC,
                     TABLE_GROUP,
-                    2,
+                    3,
                     ConfigDef.Width.SHORT,
                     "Offset storage table")
             .define(
@@ -605,13 +637,33 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Width.SHORT,
                     "Time to live (in seconds)")
             .define(
+                  TTL_DATE_FIELD_CONFIG,
+                  ConfigDef.Type.STRING,
+                  TTL_DATE_FIELD_DEFAULT,
+                  ConfigDef.Importance.MEDIUM,
+                  TTL_DATE_FIELD_DOC,
+                  WRITE_GROUP,
+                  4,
+                  ConfigDef.Width.MEDIUM,
+                  "Field to pick date for Time to live")
+            .define(
+                  TTL_DATE_OFFSET_SECONDS_CONFIG,
+                  ConfigDef.Type.INT,
+                  TTL_DATE_OFFSET_SECONDS_DEFAULT,
+                  ConfigDef.Importance.MEDIUM,
+                  TTL_DATE_OFFSET_SECONDS_DOC,
+                  WRITE_GROUP,
+                  5,
+                  ConfigDef.Width.SHORT,
+                  "Offset for Time to live (in seconds)")
+            .define(
                     ENABLE_OFFSET_STORAGE_TABLE,
                     ConfigDef.Type.BOOLEAN,
                     ENABLE_OFFSET_STORAGE_TABLE_DEFAULT,
                     ConfigDef.Importance.MEDIUM,
                     ENABLE_OFFSET_STORAGE_TABLE_DOC,
                     WRITE_GROUP,
-                    4,
+                    6,
                     ConfigDef.Width.SHORT,
                     "Enable offset stored in ScyllaDB")
             .define(

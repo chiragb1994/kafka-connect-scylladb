@@ -2,6 +2,7 @@ package io.connect.scylladb;
 
 import com.google.common.base.Preconditions;
 import io.connect.scylladb.topictotable.TopicConfigs;
+import io.connect.scylladb.topictotable.TopicConfigs.KafkaScyllaColumnMapper;
 import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
@@ -59,7 +60,9 @@ public abstract class RecordConverter<T> {
 
     protected abstract void setNullField(T result, String name);
 
-    public T convert(SinkRecord record, TopicConfigs topicConfigs, String operationType) {
+    private final String ttlParamName = "ttl";
+
+    public T convert(SinkRecord record, TopicConfigs topicConfigs, String operationType, String ttlDateField, Integer ttlDateOffsetSeconds) {
         Object recordObject = ScyllaDbConstants.DELETE_OPERATION.equals(operationType) ?
                 record.key() : record.value();
         T result = this.newValue();
@@ -69,7 +72,7 @@ public abstract class RecordConverter<T> {
         if (topicConfigs != null && topicConfigs.isScyllaColumnsMapped()) {
             columnDetailsMap = topicConfigs.getTableColumnMap();
             Preconditions.checkNotNull(record.key(), "key cannot be null.");
-            findRecordTypeAndConvert(result, record.key(), topicConfigs.getTablePartitionKeyMap());
+            findRecordTypeAndConvert(result, record.key(), topicConfigs.getTablePartitionKeyMap(), ttlDateField, ttlDateOffsetSeconds);
             for (Header header : record.headers()) {
                 if (topicConfigs.getTableColumnMap().containsKey(header.key())) {
                     TopicConfigs.KafkaScyllaColumnMapper headerKafkaScyllaColumnMapper = topicConfigs.getTableColumnMap().get(header.key());
@@ -79,24 +82,24 @@ public abstract class RecordConverter<T> {
                 }
             }
         }
-        findRecordTypeAndConvert(result, recordObject, columnDetailsMap);
+        findRecordTypeAndConvert(result, recordObject, columnDetailsMap, ttlDateField, ttlDateOffsetSeconds);
         return result;
     }
 
-    void findRecordTypeAndConvert(T result, Object recordObject,
-                                  Map<String, TopicConfigs.KafkaScyllaColumnMapper> columnDetailsMap) {
+    void findRecordTypeAndConvert(T result, Object recordObject, Map<String, KafkaScyllaColumnMapper> columnDetailsMap,
+        String ttlDateField, Integer ttlDateOffsetSeconds) {
         if (recordObject instanceof Struct) {
-            this.convertStruct(result, (Struct)recordObject, columnDetailsMap);
+            this.convertStruct(result, (Struct)recordObject, columnDetailsMap, ttlDateField, ttlDateOffsetSeconds);
         } else {
             if (!(recordObject instanceof Map)) {
                 throw new DataException(String.format("Only Schema (%s) or Schema less (%s) are supported. %s is not a supported type.", Struct.class.getName(), Map.class.getName(), recordObject.getClass().getName()));
             }
 
-            this.convertMap(result, (Map)recordObject, columnDetailsMap);
+            this.convertMap(result, (Map)recordObject, columnDetailsMap, ttlDateField, ttlDateOffsetSeconds);
         }
     }
 
-    void convertMap(T result, Map value, Map<String, TopicConfigs.KafkaScyllaColumnMapper> columnDetailsMap) {
+    void convertMap(T result, Map value, Map<String, KafkaScyllaColumnMapper> columnDetailsMap, String ttlDateField, Integer ttlDateOffsetSeconds) {
         Iterator valueIterator = value.keySet().iterator();
 
         while(valueIterator.hasNext()) {
@@ -111,66 +114,109 @@ public abstract class RecordConverter<T> {
                     continue;
                 }
             }
-
-            try {
-                if (null == fieldValue) {
-                    log.trace("convertStruct() - Setting '{}' to null.", fieldName);
-                    this.setNullField(result, fieldName);
-                } else if (fieldValue instanceof String) {
-                    log.trace("convertStruct() - Processing '{}' as string.", fieldName);
-                    this.setStringField(result, fieldName, (String)fieldValue);
-                } else if (fieldValue instanceof Byte) {
-                    log.trace("convertStruct() - Processing '{}' as int8.", fieldName);
-                    this.setInt8Field(result, fieldName, (Byte)fieldValue);
-                } else if (fieldValue instanceof Short) {
-                    log.trace("convertStruct() - Processing '{}' as int16.", fieldName);
-                    this.setInt16Field(result, fieldName, (Short)fieldValue);
-                } else if (fieldValue instanceof Integer) {
-                    log.trace("convertStruct() - Processing '{}' as int32.", fieldName);
-                    this.setInt32Field(result, fieldName, (Integer)fieldValue);
-                } else if (fieldValue instanceof Long) {
-                    log.trace("convertStruct() - Processing '{}' as long.", fieldName);
-                    this.setInt64Field(result, fieldName, (Long)fieldValue);
-                } else if (fieldValue instanceof BigInteger) {
-                    log.trace("convertStruct() - Processing '{}' as long.", fieldName);
-                    this.setInt64Field(result, fieldName, ((BigInteger)fieldValue).longValue());
-                } else if (fieldValue instanceof Double) {
-                    log.trace("convertStruct() - Processing '{}' as float64.", fieldName);
-                    this.setFloat64Field(result, fieldName, (Double)fieldValue);
-                } else if (fieldValue instanceof Float) {
-                    log.trace("convertStruct() - Processing '{}' as float32.", fieldName);
-                    this.setFloat32Field(result, fieldName, (Float)fieldValue);
-                } else if (fieldValue instanceof BigDecimal) {
-                    log.trace("convertStruct() - Processing '{}' as decimal.", fieldName);
-                    this.setDecimalField(result, fieldName, (BigDecimal)fieldValue);
-                } else if (fieldValue instanceof Boolean) {
-                    log.trace("convertStruct() - Processing '{}' as boolean.", fieldName);
-                    this.setBooleanField(result, fieldName, (Boolean)fieldValue);
-                } else if (fieldValue instanceof Date) {
-                    log.trace("convertStruct() - Processing '{}' as timestamp.", fieldName);
-                    this.setTimestampField(result, fieldName, (Date)fieldValue);
-                } else if (fieldValue instanceof byte[]) {
-                    log.trace("convertStruct() - Processing '{}' as bytes.", fieldName);
-                    this.setBytesField(result, fieldName, (byte[])((byte[])fieldValue));
-                } else if (fieldValue instanceof List) {
-                    log.trace("convertStruct() - Processing '{}' as array.", fieldName);
-                    this.setArray(result, fieldName, (Schema)null, (List)fieldValue);
-                } else {
-                    if (!(fieldValue instanceof Map)) {
-                        throw new DataException(String.format("%s is not a supported data type.", fieldValue.getClass().getName()));
-                    }
-
-                    log.trace("convertStruct() - Processing '{}' as map.", fieldName);
-                    this.setMap(result, fieldName, (Schema)null, (Map)fieldValue);
-                }
-            } catch (Exception ex) {
-                throw new DataException(String.format("Exception thrown while processing field '%s'", fieldName), ex);
+            parseMapAndSetInStatement(result, fieldName, fieldValue);
+            if (ttlDateField != null && ttlDateField.equals(fieldName)) {
+                parseMapAndSetTTLInStatement(result, fieldName, fieldValue, ttlDateOffsetSeconds);
             }
         }
 
     }
 
-    void convertStruct(T result, Struct struct, Map<String, TopicConfigs.KafkaScyllaColumnMapper> columnDetailsMap) {
+    private void parseMapAndSetTTLInStatement(T result, String fieldName, Object fieldValue, Integer ttlDateOffsetSeconds) {
+        int currentTimeSec = Long.valueOf(new Date().getTime()/1000).intValue();
+        long ttlValue;
+        try {
+            if (null == fieldValue) {
+                log.trace("convertMap() - Setting '{}' to 1.", ttlParamName);
+                this.setInt32Field(result, ttlParamName, 1);
+            } else if (fieldValue instanceof Short) {
+                log.trace("convertMap() - Processing '{}' as int16 for TTL.", fieldName);
+                ttlValue = (Short) fieldValue + ttlDateOffsetSeconds - currentTimeSec;
+                this.setInt16Field(result, ttlParamName, ttlValue > 0 ? (short)ttlValue : 1);
+            } else if (fieldValue instanceof Integer) {
+                log.trace("convertMap() - Processing '{}' as int32 for TTL.", fieldName);
+                ttlValue = (Integer)fieldValue + ttlDateOffsetSeconds - currentTimeSec;
+                this.setInt32Field(result, ttlParamName, ttlValue > 0 ? (int)ttlValue : 1);
+            } else if (fieldValue instanceof Long) {
+                log.trace("convertMap() - Processing '{}' as long for TTL.", fieldName);
+                ttlValue = (Long)fieldValue + ttlDateOffsetSeconds - currentTimeSec;
+                this.setInt64Field(result, ttlParamName, ttlValue > 0 ? ttlValue : 1);
+            } else if (fieldValue instanceof BigInteger) {
+                log.trace("convertMap() - Processing '{}' as long for TTL.", fieldName);
+                ttlValue = ((BigInteger)fieldValue).longValue()/1000 + ttlDateOffsetSeconds - currentTimeSec;
+                this.setInt64Field(result, ttlParamName, ttlValue > 0 ? ttlValue : 1);
+            } else if (fieldValue instanceof Date) {
+                log.trace("convertMap() - Processing '{}' as timestamp for TTL.", fieldName);
+                ttlValue = (((Date) fieldValue).getTime() / 1000) + ttlDateOffsetSeconds
+                    - currentTimeSec;
+                this.setInt64Field(result, ttlParamName, ttlValue > 0 ? ttlValue : 1);
+            } else {
+                throw new DataException(String.format("%s is not a supported data type for TTL.", fieldValue.getClass().getName()));
+            }
+        } catch (Exception ex) {
+            throw new DataException(String.format("Exception thrown while processing field for TTL '%s'", fieldName), ex);
+        }
+    }
+
+    void parseMapAndSetInStatement(T result, String fieldName, Object fieldValue) {
+        try {
+            if (null == fieldValue) {
+                log.trace("convertMap() - Setting '{}' to null.", fieldName);
+                this.setInt32Field(result, fieldName, (Integer)fieldValue);
+            } else if (fieldValue instanceof String) {
+                log.trace("convertMap() - Processing '{}' as string.", fieldName);
+                this.setStringField(result, fieldName, (String)fieldValue);
+            } else if (fieldValue instanceof Byte) {
+                log.trace("convertMap() - Processing '{}' as int8.", fieldName);
+                this.setInt8Field(result, fieldName, (Byte)fieldValue);
+            } else if (fieldValue instanceof Short) {
+                log.trace("convertMap() - Processing '{}' as int16.", fieldName);
+                this.setInt16Field(result, fieldName, (Short)fieldValue);
+            } else if (fieldValue instanceof Integer) {
+                log.trace("convertMap() - Processing '{}' as int32.", fieldName);
+                this.setInt32Field(result, fieldName, (Integer)fieldValue);
+            } else if (fieldValue instanceof Long) {
+                log.trace("convertMap() - Processing '{}' as long.", fieldName);
+                this.setInt64Field(result, fieldName, (Long)fieldValue);
+            } else if (fieldValue instanceof BigInteger) {
+                log.trace("convertMap() - Processing '{}' as long.", fieldName);
+                this.setInt64Field(result, fieldName, ((BigInteger)fieldValue).longValue());
+            } else if (fieldValue instanceof Double) {
+                log.trace("convertMap() - Processing '{}' as float64.", fieldName);
+                this.setFloat64Field(result, fieldName, (Double)fieldValue);
+            } else if (fieldValue instanceof Float) {
+                log.trace("convertMap() - Processing '{}' as float32.", fieldName);
+                this.setFloat32Field(result, fieldName, (Float)fieldValue);
+            } else if (fieldValue instanceof BigDecimal) {
+                log.trace("convertMap() - Processing '{}' as decimal.", fieldName);
+                this.setDecimalField(result, fieldName, (BigDecimal)fieldValue);
+            } else if (fieldValue instanceof Boolean) {
+                log.trace("convertMap() - Processing '{}' as boolean.", fieldName);
+                this.setBooleanField(result, fieldName, (Boolean)fieldValue);
+            } else if (fieldValue instanceof Date) {
+                log.trace("convertMap() - Processing '{}' as timestamp.", fieldName);
+                this.setTimestampField(result, fieldName, (Date)fieldValue);
+            } else if (fieldValue instanceof byte[]) {
+                log.trace("convertMap() - Processing '{}' as bytes.", fieldName);
+                this.setBytesField(result, fieldName, (byte[])((byte[])fieldValue));
+            } else if (fieldValue instanceof List) {
+                log.trace("convertMap() - Processing '{}' as array.", fieldName);
+                this.setArray(result, fieldName, (Schema)null, (List)fieldValue);
+            } else {
+                if (!(fieldValue instanceof Map)) {
+                    throw new DataException(String.format("%s is not a supported data type.", fieldValue.getClass().getName()));
+                }
+
+                log.trace("convertMap() - Processing '{}' as map.", fieldName);
+                this.setMap(result, fieldName, (Schema)null, (Map)fieldValue);
+            }
+        } catch (Exception ex) {
+            throw new DataException(String.format("Exception thrown while processing field '%s'", fieldName), ex);
+        }
+    }
+
+    void convertStruct(T result, Struct struct, Map<String, KafkaScyllaColumnMapper> columnDetailsMap,
+        String ttlDateField, Integer ttlDateOffsetSeconds) {
         Schema schema = struct.schema();
         Iterator fieldsIterator = schema.fields().iterator();
 
@@ -187,6 +233,63 @@ public abstract class RecordConverter<T> {
                 }
             }
             parseStructAndSetInStatement(result, schema, field, fieldValue, fieldName);
+            if (ttlDateField != null && ttlDateField.equals(fieldName)) {
+                parseStructAndSetTTLInStatement(result, schema, field, fieldValue, fieldName, ttlDateOffsetSeconds);
+            }
+        }
+    }
+
+    private void parseStructAndSetTTLInStatement(T result, Schema schema, Field field,
+        Object fieldValue, String fieldName, Integer ttlDateOffsetSeconds) {
+        try {
+            if (null == fieldValue) {
+                log.trace("convertStruct() - Setting '{}' to 1.", ttlParamName);
+                this.setInt32Field(result, ttlParamName, 1);
+            } else {
+                log.trace("convertStruct() - Field '{}'.field().schema().type() = '{}' for TTL", fieldName, field.schema().type());
+                int currentTimeSec = Long.valueOf(new Date().getTime()/1000).intValue();
+                long ttlValue;
+                switch(field.schema().type()) {
+                    case INT16:
+                        log.trace("convertStruct() - Processing '{}' as int16 for TTL.", fieldName);
+                        ttlValue = (Integer) fieldValue + ttlDateOffsetSeconds - currentTimeSec;
+                        this.setInt16Field(result, ttlParamName, ttlValue > 0 ? (short) ttlValue : 1);
+                        break;
+                    case INT32:
+                        if ("org.apache.kafka.connect.data.Date".equals(field.schema().name())) {
+                            log.trace("convertStruct() - Processing '{}' as date for TTL.", fieldName);
+                            ttlValue = (((Date) fieldValue).getTime() / 1000) + ttlDateOffsetSeconds
+                                - currentTimeSec;
+                            this.setInt64Field(result, ttlParamName, ttlValue > 0 ? ttlValue : 1);
+                        } else if ("org.apache.kafka.connect.data.Time".equals(field.schema().name())) {
+                            log.trace("convertStruct() - Processing '{}' as time for TTL.", fieldName);
+                            ttlValue = (((Date)fieldValue).getTime()/1000) + ttlDateOffsetSeconds - currentTimeSec;
+                            this.setInt64Field(result, ttlParamName, ttlValue > 0 ? ttlValue : 1);
+                        } else {
+                            Integer int32Value = (Integer)fieldValue;
+                            log.trace("convertStruct() - Processing '{}' as int32 for TTL.", fieldName);
+                            ttlValue = int32Value + ttlDateOffsetSeconds - currentTimeSec;
+                            this.setInt32Field(result, ttlParamName, ttlValue > 0 ? (int)ttlValue : 1);
+                        }
+                        break;
+                    case INT64:
+                        if ("org.apache.kafka.connect.data.Timestamp".equals(field.schema().name())) {
+                            log.trace("convertStruct() - Processing '{}' as timestamp for TTL.", fieldName);
+                            ttlValue = (((Date)fieldValue).getTime()/1000) + ttlDateOffsetSeconds - currentTimeSec;
+                            this.setInt64Field(result, ttlParamName, ttlValue > 0 ? ttlValue : 1);
+                        } else {
+                            Long int64Value = (Long)fieldValue;
+                            log.trace("convertStruct() - Processing '{}' as int64 for TTL.", fieldName);
+                            ttlValue = int64Value/1000 + ttlDateOffsetSeconds - currentTimeSec;
+                            this.setInt64Field(result, ttlParamName, ttlValue > 0 ? ttlValue : 1);
+                        }
+                        break;
+                    default:
+                        throw new DataException("Unsupported schema.type() for TTL: " + schema.type());
+                }
+            }
+        } catch (Exception ex) {
+            throw new DataException(String.format("Exception thrown while processing field for TTL '%s'", fieldName), ex);
         }
     }
 
